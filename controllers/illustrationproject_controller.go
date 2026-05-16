@@ -2,17 +2,18 @@ package controllers
 
 import (
 	context "context"
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/go-logr/logr"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -75,28 +76,15 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	log.Info("reconciling project", "productId", proj.Spec.ProductId, "filingsPrefix", filingsPrefix, "policiesPrefix", policiesPrefix, "projectionsPrefix", projectionsPrefix)
 
-	// Trigger Dagster jobs for this product (ingestion + projection) via the
-	// Dagster GraphQL API. This is intentionally generic: job names come from
-	// the product registry, and prefixes are passed as tags so Dagster can
-	// route work appropriately.
-	runID, err := triggerDagsterForProject(ctx, log, &productCfg, proj, filingsPrefix, policiesPrefix, projectionsPrefix)
+	// Ensure or create a Kubernetes Job to run the illustration pipeline for
+	// this project, and map its status back onto the IllustrationProject.
+	res, err := r.ensureIllustrationJob(ctx, log, &productCfg, proj, filingsPrefix, policiesPrefix, projectionsPrefix)
 	if err != nil {
-		log.Error(err, "failed to trigger Dagster run")
+		log.Error(err, "failed to ensure illustration Job")
 		return r.updateStatusError(ctx, proj, "Failed", err)
 	}
 
-	now := metav1.Now()
-	proj.Status.Phase = "Succeeded"
-	proj.Status.LastRunTime = &now
-	proj.Status.LastRunID = runID
-	proj.Status.LastError = ""
-
-	if err := r.Status().Update(ctx, proj); err != nil {
-		log.Error(err, "failed to update status")
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return res, nil
 }
 
 func (r *IllustrationProjectReconciler) updateStatusError(ctx context.Context, proj *illustrationsv1alpha1.IllustrationProject, phase string, cause error) (ctrl.Result, error) {
@@ -137,11 +125,6 @@ type ProductConfig struct {
 		Kind        string `json:"kind" yaml:"kind"`
 		TablePrefix string `json:"tablePrefix" yaml:"tablePrefix"`
 	} `json:"mortality" yaml:"mortality"`
-
-	Dagster struct {
-		IngestionJobs []string `json:"ingestionJobs" yaml:"ingestionJobs"`
-		ProjectionJob string   `json:"projectionJob" yaml:"projectionJob"`
-	} `json:"dagster" yaml:"dagster"`
 }
 
 // loadProductConfig loads the product registry from a mounted file.
@@ -163,135 +146,123 @@ func loadProductConfig() (*ProductRegistry, error) {
 	return &cfg, nil
 }
 
-// triggerDagsterForProject calls Dagster's GraphQL API to launch the
-// configured ingestion + projection jobs for a given product. It returns the
-// run ID of the final projection job (if any), which is suitable for
-// recording in IllustrationProject.status.lastRunId.
-func triggerDagsterForProject(
+// ensureIllustrationJob creates or updates a Kubernetes Job responsible for
+// running the illustration pipeline for a given project. It also maps the Job
+// status back to the IllustrationProject status.
+func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 	ctx context.Context,
 	log logr.Logger,
 	productCfg *ProductConfig,
 	proj *illustrationsv1alpha1.IllustrationProject,
 	filingsPrefix, policiesPrefix, projectionsPrefix string,
-) (string, error) {
-	baseURL := os.Getenv("DAGSTER_GRAPHQL_URL")
-	if baseURL == "" {
-		// Default in-cluster Dagster dev service; tweak as needed for your
-		// environment.
-		baseURL = "http://dagster-dev.illustrations-poc.svc.cluster.local:3030/graphql"
-	}
+) (ctrl.Result, error) {
+	jobName := fmt.Sprintf("illustration-%s", proj.Name)
+	nn := types.NamespacedName{Name: jobName, Namespace: proj.Namespace}
+	job := &batchv1.Job{}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	tags := []map[string]string{
-		{"key": "illustrations.poc/productId", "value": proj.Spec.ProductId},
-		{"key": "illustrations.poc/projectName", "value": proj.Name},
-		{"key": "illustrations.poc/filingsPrefix", "value": filingsPrefix},
-		{"key": "illustrations.poc/policiesPrefix", "value": policiesPrefix},
-		{"key": "illustrations.poc/projectionsPrefix", "value": projectionsPrefix},
-	}
-
-	launch := func(jobName string) (string, error) {
-		if jobName == "" {
-			return "", fmt.Errorf("dagster job name is empty")
+	if err := r.Get(ctx, nn, job); err != nil {
+		if !kerrors.IsNotFound(err) {
+			return ctrl.Result{}, err
 		}
 
-		query := `mutation LaunchRun($jobName: String!, $tags: [PipelineTag!]) {
-  launchRun(executionParams: {
-    selector: { jobName: $jobName },
-    runConfig: {},
-    tags: $tags
-  }) {
-    __typename
-    ... on LaunchRunSuccess { run { runId } }
-    ... on PythonError { message }
-    ... on LaunchRunFailure { message }
-  }
-}`
-
-		payload := map[string]any{
-			"query": query,
-			"variables": map[string]any{
-				"jobName": jobName,
-				"tags":    tags,
+		// Create a new Job for this project.
+		job = &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      jobName,
+				Namespace: proj.Namespace,
+				Labels: map[string]string{
+					"app":                         "illustration-runner",
+					"illustrations.poc/project":   proj.Name,
+					"illustrations.poc/productId": proj.Spec.ProductId,
+				},
+			},
+			Spec: batchv1.JobSpec{
+				BackoffLimit: int32Ptr(0),
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						RestartPolicy: corev1.RestartPolicyNever,
+						Containers: []corev1.Container{
+							{
+								Name:  "runner",
+								Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
+								Command: []string{"/bin/sh", "-c"},
+								Args: []string{
+									"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME ; " +
+										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX ; " +
+										"# TODO: invoke actuary POC CLI here; for now we just sleep to simulate work; " +
+										"sleep 10",
+								},
+								Env: []corev1.EnvVar{
+									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
+									{Name: "PROJECT_NAME", Value: proj.Name},
+									{Name: "FILINGS_PREFIX", Value: filingsPrefix},
+									{Name: "POLICIES_PREFIX", Value: policiesPrefix},
+									{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
+								},
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{
+										corev1.ResourceCPU:    resource.MustParse("100m"),
+										corev1.ResourceMemory: resource.MustParse("128Mi"),
+									},
+								},
+							},
+						},
+					},
+				},
 			},
 		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return "", err
+
+		if job.Spec.Template.Spec.Containers[0].Image == "" {
+			job.Spec.Template.Spec.Containers[0].Image = "python:3.11-slim"
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL, bytes.NewReader(body))
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("dagster HTTP %d", resp.StatusCode)
+		if err := ctrl.SetControllerReference(proj, job, r.Scheme); err != nil {
+			return ctrl.Result{}, err
 		}
 
-		var result struct {
-			Data struct {
-				LaunchRun struct {
-					Typename string `json:"__typename"`
-					Run      struct {
-						RunID string `json:"runId"`
-					} `json:"run"`
-					Message string `json:"message"`
-				} `json:"launchRun"`
-			} `json:"data"`
-			Errors []struct {
-				Message string `json:"message"`
-			} `json:"errors"`
+		if err := r.Create(ctx, job); err != nil {
+			return ctrl.Result{}, err
 		}
 
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", err
-		}
+		log.Info("created illustration Job", "job", jobName)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 
-		if len(result.Errors) > 0 {
-			return "", fmt.Errorf("dagster graphql error: %s", result.Errors[0].Message)
-		}
-
-		lr := result.Data.LaunchRun
-		if lr.Typename != "LaunchRunSuccess" {
-			if lr.Message != "" {
-				return "", fmt.Errorf("dagster launchRun failed: %s", lr.Message)
+	// Job already exists; inspect its status.
+	for _, cond := range job.Status.Conditions {
+		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+			proj.Status.Phase = "Failed"
+			proj.Status.LastRunID = job.Name
+			msg := cond.Message
+			if msg == "" {
+				msg = cond.Reason
 			}
-			return "", fmt.Errorf("dagster launchRun returned %s", lr.Typename)
+			proj.Status.LastError = msg
+			if err := r.Status().Update(ctx, proj); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
-
-		if lr.Run.RunID == "" {
-			return "", fmt.Errorf("dagster launchRun succeeded but runId empty")
-		}
-
-		log.Info("launched Dagster job", "job", jobName, "runId", lr.Run.RunID)
-		return lr.Run.RunID, nil
-	}
-
-	// Run ingestion jobs first (if any), then projection job. We only record
-	// the projection run ID in status for now.
-	for _, job := range productCfg.Dagster.IngestionJobs {
-		if _, err := launch(job); err != nil {
-			return "", fmt.Errorf("launching ingestion job %q: %w", job, err)
+		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
+			proj.Status.Phase = "Succeeded"
+			proj.Status.LastRunID = job.Name
+			proj.Status.LastError = ""
+			if err := r.Status().Update(ctx, proj); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 
-	if productCfg.Dagster.ProjectionJob == "" {
-		return "", fmt.Errorf("no projectionJob configured for product %q", proj.Spec.ProductId)
+	// Job is still running or pending; mark project as Running and requeue.
+	proj.Status.Phase = "Running"
+	proj.Status.LastRunID = job.Name
+	proj.Status.LastError = ""
+	if err := r.Status().Update(ctx, proj); err != nil {
+		return ctrl.Result{}, err
 	}
 
-	projRunID, err := launch(productCfg.Dagster.ProjectionJob)
-	if err != nil {
-		return "", fmt.Errorf("launching projection job %q: %w", productCfg.Dagster.ProjectionJob, err)
-	}
-
-	return fmt.Sprintf("dagster:%s", projRunID), nil
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
+
+func int32Ptr(v int32) *int32 { return &v }
