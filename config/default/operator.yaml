@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: illustration-operator
+  namespace: illustrations-poc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: illustration-operator
+  namespace: illustrations-poc
+rules:
+  - apiGroups: ["illustrations.poc"]
+    resources: ["illustrationprojects", "illustrationprojects/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: illustration-operator
+  namespace: illustrations-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: illustration-operator
+subjects:
+  - kind: ServiceAccount
+    name: illustration-operator
+    namespace: illustrations-poc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: illustration-operator
+  namespace: illustrations-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: illustration-operator
+  template:
+    metadata:
+      labels:
+        app: illustration-operator
+    spec:
+      serviceAccountName: illustration-operator
+      containers:
+        - name: operator
+          image: ghcr.io/billyridgway/illustration-operator:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--metrics-bind-address=:8080"
+            - "--health-probe-bind-address=:8081"
+          env:
+            - name: CONFIG_PATH
+              value: "/config/products.yaml"
+          volumeMounts:
+            - name: products-config
+              mountPath: /config
+      volumes:
+        - name: products-config
+          configMap:
+            name: illustration-products
