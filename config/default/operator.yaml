@@ -50,7 +50,7 @@ spec:
       containers:
         - name: operator
           image: ghcr.io/billyridgway/illustration-operator:main
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args:
             - "--metrics-bind-address=:8080"
             - "--health-probe-bind-address=:8081"
