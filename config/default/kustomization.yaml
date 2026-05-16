@@ -4,6 +4,6 @@ kind: Kustomization
 namespace: illustrations-poc
 
 resources:
-  - ../crd/bases/illustrations.poc_illustrationprojects.yaml
+  - ../crd
   - operator.yaml
   - products-configmap.yaml

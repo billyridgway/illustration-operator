@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -89,4 +90,24 @@ type IllustrationProjectList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []IllustrationProject `json:"items"`
+}
+
+// DeepCopyObject implements runtime.Object for IllustrationProject.
+func (in *IllustrationProject) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(IllustrationProject)
+	*out = *in
+	return out
+}
+
+// DeepCopyObject implements runtime.Object for IllustrationProjectList.
+func (in *IllustrationProjectList) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(IllustrationProjectList)
+	*out = *in
+	return out
 }

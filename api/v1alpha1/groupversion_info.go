@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
@@ -22,7 +21,6 @@ func init() {
 	SchemeBuilder.Register(&IllustrationProject{}, &IllustrationProjectList{})
 }
 
-// +kubebuilder:object:generate=true
 // +groupName=illustrations.poc
 
 // Type metadata constants for convenience.
