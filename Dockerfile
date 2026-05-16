@@ -13,8 +13,11 @@ RUN go mod download
 # Copy the rest of the source
 COPY . ./
 
-# Build the manager binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o manager main.go
+# Build the manager binary. When using buildx with a specific platform,
+# TARGETOS/TARGETARCH will be set accordingly (e.g. linux/arm64).
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o manager main.go
 
 # Final minimal image
 FROM gcr.io/distroless/base-debian12
