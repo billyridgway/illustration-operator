@@ -1,0 +1,67 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: illustrationprojects.illustrations.poc
+spec:
+  group: illustrations.poc
+  scope: Namespaced
+  names:
+    plural: illustrationprojects
+    singular: illustrationproject
+    kind: IllustrationProject
+    shortNames:
+      - ilproj
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - productId
+              properties:
+                productId:
+                  type: string
+                  minLength: 1
+                  description: Logical product identifier (must exist in ProductRegistry).
+                horizonYears:
+                  type: integer
+                  minimum: 1
+                  description: Projection horizon in years.
+                  default: 40
+                mode:
+                  type: string
+                  description: adhoc or scheduled.
+                  enum:
+                    - adhoc
+                    - scheduled
+                  default: adhoc
+                runPolicy:
+                  type: object
+                  properties:
+                    schedule:
+                      type: string
+                      description: Cron expression in cluster-local time.
+                    concurrency:
+                      type: string
+                      description: Concurrency policy (Allow, Forbid, Replace).
+                notes:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                lastRunTime:
+                  type: string
+                  format: date-time
+                lastRunId:
+                  type: string
+                lastError:
+                  type: string
+      subresources:
+        status: {}

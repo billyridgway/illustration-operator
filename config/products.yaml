@@ -1,0 +1,11 @@
+apiVersion: illustrations.poc/v1alpha1
+kind: ProductRegistry
+
+products:
+  p12trf:
+    displayName: "Pacific Life ICC12 P12TRF Term"
+    dslFile: "p12trf_term.yaml"
+    prefixBase: "p12trf"
+    mortality:
+      kind: "2017-cso-term"
+      tablePrefix: "actuarial_tables_term23/"
