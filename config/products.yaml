@@ -9,3 +9,8 @@ products:
     mortality:
       kind: "2017-cso-term"
       tablePrefix: "actuarial_tables_term23/"
+    dagster:
+      ingestionJobs:
+        - p12trf_policies_job
+        - p12trf_filings_job
+      projectionJob: p12trf_projection_job

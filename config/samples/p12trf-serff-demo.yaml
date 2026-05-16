@@ -1,0 +1,10 @@
+apiVersion: illustrations.poc/v1alpha1
+kind: IllustrationProject
+metadata:
+  name: p12trf-serff-demo
+  namespace: illustrations-poc
+spec:
+  productId: p12trf
+  horizonYears: 40
+  mode: adhoc
+  notes: "Demo project for P12TRF SERFF filings (PALD-1322..., PET risk mapping, etc.)"
