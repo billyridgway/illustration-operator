@@ -189,6 +189,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 								{
 									Name:  "runner",
 									Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
+									ImagePullPolicy: corev1.PullAlways,
 									Command: []string{"/bin/sh", "-c"},
 									Args: []string{
 										"set -euo pipefail; " +
