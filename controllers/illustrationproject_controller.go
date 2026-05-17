@@ -176,32 +176,44 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 					"illustrations.poc/productId": proj.Spec.ProductId,
 				},
 			},
-			Spec: batchv1.JobSpec{
-				BackoffLimit: int32Ptr(0),
-				Template: corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-						RestartPolicy: corev1.RestartPolicyNever,
-						Containers: []corev1.Container{
-							{
-								Name:  "runner",
-								Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
-								Command: []string{"/bin/sh", "-c"},
-								Args: []string{
-									"set -euo pipefail; " +
-										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
-										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-										"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
-										"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
-										"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
-										"python -m actuarypoc.cli.main project-p12trf-sample",
-								},
-								Env: []corev1.EnvVar{
-									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
-									{Name: "PROJECT_NAME", Value: proj.Name},
-									{Name: "FILINGS_PREFIX", Value: filingsPrefix},
-									{Name: "POLICIES_PREFIX", Value: policiesPrefix},
-									{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
-								},
+				Spec: batchv1.JobSpec{
+					BackoffLimit: int32Ptr(0),
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyNever,
+							Containers: []corev1.Container{
+								{
+									Name:  "runner",
+									Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
+									Command: []string{"/bin/sh", "-c"},
+									Args: []string{
+										"set -euo pipefail; " +
+											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
+											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
+											"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
+											"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
+											"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
+											"python -m actuarypoc.cli.main project-p12trf-sample",
+									},
+									Env: []corev1.EnvVar{
+										{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
+										{Name: "PROJECT_NAME", Value: proj.Name},
+										{Name: "FILINGS_PREFIX", Value: filingsPrefix},
+										{Name: "POLICIES_PREFIX", Value: policiesPrefix},
+										{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
+										// MinIO configuration for connectors → MinIO ingestion.
+										{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
+										{Name: "MINIO_ACCESS_KEY", Value: "admin"},
+										{Name: "MINIO_SECRET_KEY", Value: "password"},
+										{Name: "MINIO_BUCKET", Value: "illuminet"},
+										{Name: "MINIO_SECURE", Value: "false"},
+									},
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("100m"),
