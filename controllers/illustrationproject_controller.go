@@ -195,13 +195,13 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										"set -euo pipefail; " +
 											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
 											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-											"cd /opt/dagster/app/src; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
+											"cd /opt/dagster/app; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/policies_p12trf.csv; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/pas_export.csv; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/actuarial_tables.csv; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/crm_accounts.csv; " +
+											"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/rate_curves.csv; " +
 											"python -m actuarypoc.cli.main project-minio",
 								},
 								Env: []corev1.EnvVar{
