@@ -194,9 +194,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										"set -euo pipefail; " +
 											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
 											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-											"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
-											"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
-											"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
+											"cd /opt/dagster/app; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
