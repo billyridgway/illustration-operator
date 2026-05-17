@@ -187,10 +187,13 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 								Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
 								Command: []string{"/bin/sh", "-c"},
 								Args: []string{
-									"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME ; " +
-										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX ; " +
-										"# TODO: invoke actuary POC CLI here; for now we just sleep to simulate work; " +
-										"sleep 10",
+									"set -euo pipefail; " +
+										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
+										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
+										"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
+										"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
+										"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
+										"python -m actuarypoc.cli.main project-p12trf-sample",
 								},
 								Env: []corev1.EnvVar{
 									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
