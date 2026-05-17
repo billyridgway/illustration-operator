@@ -237,11 +237,14 @@ func (r *IllustrationProjectReconciler) ensureLLMJob(
 								{Name: "LLM_DOC_PREFIX", Value: docPrefix},
 								{Name: "LLM_PRODUCT_CODE", Value: proj.Spec.ProductId},
 								{Name: "LLM_ASSUMPTION_ID", Value: assumptionID},
-							},
-							EnvFrom: []corev1.EnvFromSource{
+								// OpenAI API key from Kubernetes Secret (key: api-key).
 								{
-									SecretRef: &corev1.SecretEnvSource{
-										LocalObjectReference: corev1.LocalObjectReference{Name: "openai-api-key"},
+									Name: "OPENAI_API_KEY",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: "openai-api-key"},
+											Key:                  "api-key",
+										},
 									},
 								},
 							},
