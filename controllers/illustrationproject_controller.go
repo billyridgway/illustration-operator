@@ -194,7 +194,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										"set -euo pipefail; " +
 											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
 											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-											"cd /opt/dagster/app; " +
+											"cd /opt/dagster/app/src; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
 											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
