@@ -185,25 +185,23 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							RestartPolicy: corev1.RestartPolicyNever,
-						Containers: []corev1.Container{
-							{
-								Name:  "runner",
-								Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
-								Command: []string{"/bin/sh", "-c"},
-								Args: []string{
-									"set -euo pipefail; " +
-										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
-										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-										"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
-										"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
-										"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
-										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
-										"python -m actuarypoc.cli.main project-minio",
+							Containers: []corev1.Container{
+								{
+									Name:  "runner",
+									Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
+									Command: []string{"/bin/sh", "-c"},
+									Args: []string{
+										"set -euo pipefail; " +
+											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
+											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
+											"cd /opt/dagster/app; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
+											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
+											"python -m actuarypoc.cli.main project-minio",
 								},
 								Env: []corev1.EnvVar{
 									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},

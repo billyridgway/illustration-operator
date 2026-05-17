@@ -63,5 +63,7 @@ spec:
                   type: string
                 lastError:
                   type: string
+                projectionObject:
+                  type: string
       subresources:
         status: {}
