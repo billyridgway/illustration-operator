@@ -84,6 +84,51 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 		// or pre-populated assumptions.
 	}
 
+	// If LLM extraction is configured for this product, wait for the
+	// assumptions Job to reach a terminal state before starting the
+	// illustration Job. This ensures that, when the LLM succeeds, the latest
+	// AssumptionSet is available to the projection pipeline. On failure we
+	// still allow projections to run with existing assumptions.
+	if productCfg.LLM.DocPrefix != "" || productCfg.LLM.AssumptionID != "" {
+		llmJobName := fmt.Sprintf("assumptions-%s", proj.Spec.ProductId)
+		llmNN := types.NamespacedName{Name: llmJobName, Namespace: proj.Namespace}
+		llmJob := &batchv1.Job{}
+
+		if err := r.Get(ctx, llmNN, llmJob); err != nil {
+			if kerrors.IsNotFound(err) {
+				// Job has just been created or not yet visible; requeue and wait.
+				log.Info("LLM assumptions Job not yet created; requeuing before projection", "job", llmJobName)
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+
+			// On read errors, log and continue to illustration so we don't wedge
+			// the controller; projections will use whatever assumptions are
+			// already present.
+			log.Error(err, "failed to fetch LLM assumptions Job status", "job", llmJobName)
+		} else {
+			terminal := false
+			for _, cond := range llmJob.Status.Conditions {
+				if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
+					log.Info("LLM assumptions Job completed; proceeding to projection", "job", llmJobName)
+					terminal = true
+					break
+				}
+				if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+					log.Info("LLM assumptions Job failed; proceeding with existing assumptions", "job", llmJobName, "reason", cond.Reason, "message", cond.Message)
+					terminal = true
+					break
+				}
+			}
+
+			if !terminal {
+				// Job exists but is still Pending/Running; wait before creating or
+				// updating the illustration Job.
+				log.Info("LLM assumptions Job not yet in terminal state; requeuing before projection", "job", llmJobName)
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+		}
+	}
+
 	// Ensure or create a Kubernetes Job to run the illustration pipeline for
 	// this project, and map its status back onto the IllustrationProject.
 	res, err := r.ensureIllustrationJob(ctx, log, &productCfg, proj, filingsPrefix, policiesPrefix, projectionsPrefix)
