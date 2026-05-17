@@ -70,6 +70,10 @@ type IllustrationProjectStatus struct {
 	// LastError contains a human-readable error message from the most recent
 	// failed run, if any.
 	LastError string `json:"lastError,omitempty"`
+
+	// ProjectionObject holds the MinIO object key where the most recent
+	// projection artifact was written (e.g. projections/p12trf/run-123.json).
+	ProjectionObject string `json:"projectionObject,omitempty"`
 }
 
 // +kubebuilder:object:root=true

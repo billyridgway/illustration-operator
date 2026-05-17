@@ -160,6 +160,10 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 	nn := types.NamespacedName{Name: jobName, Namespace: proj.Namespace}
 	job := &batchv1.Job{}
 
+	// Choose a deterministic object key for the projection artifact so we can
+	// both write it from the runner and surface it in status.
+	projectionObject := fmt.Sprintf("%srun-%d.json", projectionsPrefix, time.Now().Unix())
+
 	if err := r.Get(ctx, nn, job); err != nil {
 		if !kerrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -176,40 +180,43 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 					"illustrations.poc/productId": proj.Spec.ProductId,
 				},
 			},
-				Spec: batchv1.JobSpec{
+			Spec: batchv1.JobSpec{
 					BackoffLimit: int32Ptr(0),
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							RestartPolicy: corev1.RestartPolicyNever,
-							Containers: []corev1.Container{
-								{
-									Name:  "runner",
-									Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
-									Command: []string{"/bin/sh", "-c"},
-									Args: []string{
-										"set -euo pipefail; " +
-											"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
-											"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-											"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
-											"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
-											"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
-											"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
-											"python -m actuarypoc.cli.main project-p12trf-sample",
-									},
-									Env: []corev1.EnvVar{
-										{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
-										{Name: "PROJECT_NAME", Value: proj.Name},
-										{Name: "FILINGS_PREFIX", Value: filingsPrefix},
-										{Name: "POLICIES_PREFIX", Value: policiesPrefix},
-										{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
-										// MinIO configuration for connectors → MinIO ingestion.
-										{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
-										{Name: "MINIO_ACCESS_KEY", Value: "admin"},
+						Containers: []corev1.Container{
+							{
+								Name:  "runner",
+								Image: os.Getenv("ILLUSTRATION_RUNNER_IMAGE"),
+								Command: []string{"/bin/sh", "-c"},
+								Args: []string{
+									"set -euo pipefail; " +
+										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
+										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
+										"apt-get update >/dev/null && apt-get install -y git python3-pip >/dev/null; " +
+										"rm -rf /app && git clone https://github.com/billyridgway/actuarypoc.git /app >/dev/null 2>&1; " +
+										"cd /app; pip install --no-cache-dir -r requirements.txt >/dev/null; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/policies_p12trf.csv; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/pas_export.csv; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables.csv; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/crm_accounts.csv; " +
+										"python -m actuarypoc.cli.main load-sample src/actuarypoc/sample_data/rate_curves.csv; " +
+										"python -m actuarypoc.cli.main project-minio",
+								},
+								Env: []corev1.EnvVar{
+									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
+									{Name: "PROJECT_NAME", Value: proj.Name},
+									{Name: "FILINGS_PREFIX", Value: filingsPrefix},
+									{Name: "POLICIES_PREFIX", Value: policiesPrefix},
+									{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
+									// Projection artifact location for the runner → MinIO,
+									// and surfaced back on IllustrationProject.Status.
+									{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},
+									// MinIO configuration for connectors → MinIO ingestion.
+									{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
+									{Name: "MINIO_ACCESS_KEY", Value: "admin"},
 										{Name: "MINIO_SECRET_KEY", Value: "password"},
 										{Name: "MINIO_BUCKET", Value: "illuminet"},
 										{Name: "MINIO_SECURE", Value: "false"},
@@ -225,6 +232,16 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 					},
 				},
 			},
+		}
+
+		// Record the planned projection object location in status before we
+		// launch the Job. On success the runner will have written to this key.
+		proj.Status.Phase = "Running"
+		proj.Status.LastRunID = jobName
+		proj.Status.LastError = ""
+		proj.Status.ProjectionObject = projectionObject
+		if err := r.Status().Update(ctx, proj); err != nil {
+			return ctrl.Result{}, err
 		}
 
 		if job.Spec.Template.Spec.Containers[0].Image == "" {
