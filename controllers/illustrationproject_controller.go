@@ -209,6 +209,8 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 									{Name: "FILINGS_PREFIX", Value: filingsPrefix},
 									{Name: "POLICIES_PREFIX", Value: policiesPrefix},
 									{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
+									// Ensure Python can import actuarypoc from the source tree in the runner image.
+									{Name: "PYTHONPATH", Value: "/opt/dagster/app/src"},
 									// Projection artifact location for the runner → MinIO,
 									// and surfaced back on IllustrationProject.Status.
 									{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},
