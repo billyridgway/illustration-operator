@@ -40,6 +40,13 @@ type IllustrationProjectSpec struct {
 	// real scheduler (CronJob or Dagster) can consume it later.
 	RunPolicy *RunPolicy `json:"runPolicy,omitempty"`
 
+	// PasConfigMap optionally names a ConfigMap in the same namespace
+	// that contains PAS policy records under the key "pas.json".
+	// When set, the runner mounts this ConfigMap and the projection
+	// service reads PAS JSON from PAS_JSON_PATH instead of MinIO
+	// pas_export/ prefixes.
+	PasConfigMap string `json:"pasConfigMap,omitempty"`
+
 	// Notes is free-form text for humans.
 	Notes string `json:"notes,omitempty"`
 }

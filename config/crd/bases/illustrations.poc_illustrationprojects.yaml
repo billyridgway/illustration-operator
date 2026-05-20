@@ -49,6 +49,9 @@ spec:
                     concurrency:
                       type: string
                       description: Concurrency policy (Allow, Forbid, Replace).
+                pasConfigMap:
+                  type: string
+                  description: Name of a ConfigMap containing PAS JSON under key pas.json.
                 notes:
                   type: string
             status:

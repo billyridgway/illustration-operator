@@ -355,6 +355,22 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						RestartPolicy: corev1.RestartPolicyNever,
+						Volumes: func() []corev1.Volume {
+							if proj.Spec.PasConfigMap == "" {
+								return nil
+							}
+							return []corev1.Volume{
+								{
+									Name: "pas-config",
+									VolumeSource: corev1.VolumeSource{
+										ConfigMap: &corev1.ConfigMapVolumeSource{
+											LocalObjectReference: corev1.LocalObjectReference{Name: proj.Spec.PasConfigMap},
+											Items: []corev1.KeyToPath{{Key: "pas.json", Path: "pas.json"}},
+										},
+									},
+								},
+							}
+						}(),
 						Containers: []corev1.Container{
 							{
 								Name:            "runner",
@@ -374,24 +390,42 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/rate_curves.csv; " +
 										"python -m actuarypoc.cli.main project-minio",
 								},
-								Env: []corev1.EnvVar{
-									{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
-									{Name: "PROJECT_NAME", Value: proj.Name},
-									{Name: "FILINGS_PREFIX", Value: filingsPrefix},
-									{Name: "POLICIES_PREFIX", Value: policiesPrefix},
-									{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
-									// Ensure Python can import actuarypoc from the source tree in the runner image.
-									{Name: "PYTHONPATH", Value: "/opt/dagster/app/src"},
-									// Projection artifact location for the runner → MinIO,
-									// and surfaced back on IllustrationProject.Status.
-									{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},
-									// MinIO configuration for connectors → MinIO ingestion.
-									{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
-									{Name: "MINIO_ACCESS_KEY", Value: "admin"},
-									{Name: "MINIO_SECRET_KEY", Value: "password"},
-									{Name: "MINIO_BUCKET", Value: "illuminet"},
-									{Name: "MINIO_SECURE", Value: "false"},
-								},
+								Env: func() []corev1.EnvVar {
+									vars := []corev1.EnvVar{
+										{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
+										{Name: "PROJECT_NAME", Value: proj.Name},
+										{Name: "FILINGS_PREFIX", Value: filingsPrefix},
+										{Name: "POLICIES_PREFIX", Value: policiesPrefix},
+										{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
+										// Ensure Python can import actuarypoc from the source tree in the runner image.
+										{Name: "PYTHONPATH", Value: "/opt/dagster/app/src"},
+										// Projection artifact location for the runner → MinIO,
+										// and surfaced back on IllustrationProject.Status.
+										{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},
+										// MinIO configuration for connectors → MinIO ingestion.
+										{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
+										{Name: "MINIO_ACCESS_KEY", Value: "admin"},
+										{Name: "MINIO_SECRET_KEY", Value: "password"},
+										{Name: "MINIO_BUCKET", Value: "illuminet"},
+										{Name: "MINIO_SECURE", Value: "false"},
+									}
+									if proj.Spec.PasConfigMap != "" {
+											vars = append(vars, corev1.EnvVar{Name: "PAS_JSON_PATH", Value: "/config/pas/pas.json"})
+										}
+									return vars
+								}(),
+								VolumeMounts: func() []corev1.VolumeMount {
+									if proj.Spec.PasConfigMap == "" {
+										return nil
+									}
+									return []corev1.VolumeMount{
+										{
+											Name:      "pas-config",
+											MountPath: "/config/pas",
+											ReadOnly:  true,
+										},
+									}
+								}(),
 								Resources: corev1.ResourceRequirements{
 									Requests: corev1.ResourceList{
 										corev1.ResourceCPU:    resource.MustParse("100m"),
