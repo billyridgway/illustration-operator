@@ -74,6 +74,27 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 	policiesPrefix := fmt.Sprintf("%s/", prefixBase)
 	projectionsPrefix := fmt.Sprintf("projections/%s/", prefixBase)
 
+	// Work out LLM doc/assumption identifiers so we can surface them in status.
+	docPrefix := productCfg.LLM.DocPrefix
+	if docPrefix == "" && (productCfg.LLM.DocPrefix != "" || productCfg.LLM.AssumptionID != "") {
+		docPrefix = fmt.Sprintf("docs/%s/", prefixBase)
+	}
+	assumptionID := productCfg.LLM.AssumptionID
+	if assumptionID == "" && (productCfg.LLM.DocPrefix != "" || productCfg.LLM.AssumptionID != "") {
+		assumptionID = fmt.Sprintf("%s-llm-v1", proj.Spec.ProductId)
+	}
+
+	// Capture a human-friendly summary of the resolved wiring on status.
+	proj.Status.Resolved = &illustrationsv1alpha1.ResolvedRefs{
+		ProductId:    proj.Spec.ProductId,
+		PasConfigMap: proj.Spec.PasConfigMap,
+		PasKey:       "pas.json",
+		DSLFile:      productCfg.DSLFile,
+		AssumptionId: assumptionID,
+		FilingsPrefix: filingsPrefix,
+		DocPrefix:     docPrefix,
+	}
+
 	log.Info("reconciling project", "productId", proj.Spec.ProductId, "filingsPrefix", filingsPrefix, "policiesPrefix", policiesPrefix, "projectionsPrefix", projectionsPrefix)
 
 	// Ensure or create a Kubernetes Job to LLM-extract assumptions for this

@@ -61,6 +61,32 @@ type RunPolicy struct {
 	Concurrency string `json:"concurrency,omitempty"`
 }
 
+// ResolvedRefs summarizes the concrete inputs and artefacts used for
+// a projection run so that humans and UIs can see the wiring at a glance.
+type ResolvedRefs struct {
+	// ProductId is the logical product identifier (copied from spec).
+	ProductId string `json:"productId,omitempty"`
+
+	// PasConfigMap is the name of the ConfigMap providing PAS JSON, when set.
+	PasConfigMap string `json:"pasConfigMap,omitempty"`
+
+	// PasKey is the key inside the ConfigMap that contains PAS JSON (typically "pas.json").
+	PasKey string `json:"pasKey,omitempty"`
+
+	// DSLFile is the product DSL file selected from the product registry.
+	DSLFile string `json:"dslFile,omitempty"`
+
+	// AssumptionId is the logical AssumptionSet identifier the product is
+	// expected to use (from product LLM config).
+	AssumptionId string `json:"assumptionId,omitempty"`
+
+	// FilingsPrefix is the MinIO prefix under which policy filings/docs live.
+	FilingsPrefix string `json:"filingsPrefix,omitempty"`
+
+	// DocPrefix is the prefix used by the LLM assumptions extractor, when configured.
+	DocPrefix string `json:"docPrefix,omitempty"`
+}
+
 // IllustrationProjectStatus defines the observed state of IllustrationProject.
 
 type IllustrationProjectStatus struct {
@@ -81,6 +107,10 @@ type IllustrationProjectStatus struct {
 	// ProjectionObject holds the MinIO object key where the most recent
 	// projection artifact was written (e.g. projections/p12trf/run-123.json).
 	ProjectionObject string `json:"projectionObject,omitempty"`
+
+	// Resolved describes the concrete inputs and artefacts used for the
+	// most recent run (product, PAS source, DSL, assumptions, filings).
+	Resolved *ResolvedRefs `json:"resolved,omitempty"`
 }
 
 // +kubebuilder:object:root=true

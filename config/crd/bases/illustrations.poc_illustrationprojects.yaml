@@ -68,5 +68,22 @@ spec:
                   type: string
                 projectionObject:
                   type: string
+                resolved:
+                  type: object
+                  properties:
+                    productId:
+                      type: string
+                    pasConfigMap:
+                      type: string
+                    pasKey:
+                      type: string
+                    dslFile:
+                      type: string
+                    assumptionId:
+                      type: string
+                    filingsPrefix:
+                      type: string
+                    docPrefix:
+                      type: string
       subresources:
         status: {}
