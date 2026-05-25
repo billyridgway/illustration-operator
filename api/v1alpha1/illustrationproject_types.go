@@ -37,7 +37,7 @@ type IllustrationProjectSpec struct {
 
 	// RunPolicy contains optional scheduling / concurrency hints for
 	// the operator. For now this is informational; integration with a
-	// real scheduler (CronJob or Dagster) can consume it later.
+	// real scheduler (CronJob or another controller) can consume it later.
 	RunPolicy *RunPolicy `json:"runPolicy,omitempty"`
 
 	// PasConfigMap optionally names a ConfigMap in the same namespace
@@ -96,8 +96,8 @@ type IllustrationProjectStatus struct {
 	// LastRunTime records when the last illustration run was started/completed.
 	LastRunTime *metav1.Time `json:"lastRunTime,omitempty"`
 
-	// LastRunID can hold an external run identifier (e.g. Dagster run id,
-	// Kubernetes Job name, etc.).
+	// LastRunID can hold an external run identifier (e.g. Kubernetes Job
+	// name or other orchestrator-specific id).
 	LastRunID string `json:"lastRunId,omitempty"`
 
 	// LastError contains a human-readable error message from the most recent

@@ -2,7 +2,7 @@
 
 Kubernetes operator for managing `IllustrationProject` CRDs and driving
 illustration runs (ingestion + projection) against the Actuary POC stack
-(Dagster + MinIO + actuarypoc repo).
+(MinIO + actuarypoc repo).
 
 The operator turns a small, declarative CRD into concrete illustration
 pipelines: it resolves product wiring, kicks off the necessary Jobs, and
@@ -16,7 +16,7 @@ This is a **proof‑of‑concept** operator focused on a narrow but realistic
 scenario:
 
 - **Cluster scope**: Namespaced operator intended for a single POC
-  environment (MinIO + Dagster + `actuarypoc`). It is *not* hardened for
+  environment (MinIO + `actuarypoc`). It is *not* hardened for
   multi‑tenant or production use.
 - **What it manages**
   - `IllustrationProject` CRDs (API group: `illustrations.poc/v1alpha1`).
@@ -102,7 +102,6 @@ Kubernetes‑native workflow:
 - The POC already has:
   - A product DSL + interpreter (`actuarypoc` repo).
   - MinIO as the object store for filings, PAS exports, and projections.
-  - (Optionally) Dagster for orchestration.
 - What was missing was a **cluster‑native API** for “run this illustration
   scenario” that:
   - Can be versioned, watched, and reconciled like any other Kubernetes
@@ -111,7 +110,7 @@ Kubernetes‑native workflow:
     via a registry instead of per‑run ad‑hoc config.
   - Allows UIs or other services to simply `kubectl apply` an
     `IllustrationProject` and watch status, instead of wiring directly to
-    MinIO or Dagster.
+    MinIO or a separate orchestrator.
 
 Design choices in this POC:
 
@@ -177,5 +176,5 @@ mounted into the operator at `/config/products.yaml`.
   Jobs, ConfigMaps, and Secrets.
 - Gradually factor out hard‑coded demo assumptions (sample data loads,
   MinIO creds) into proper configuration.
-- Optionally replace or complement the direct `Job` wiring with Dagster
-  integration once the desired pipeline shape is stable.
+- Consider layering a higher-level orchestrator on top (if needed) once
+  the desired pipeline shape is stable.

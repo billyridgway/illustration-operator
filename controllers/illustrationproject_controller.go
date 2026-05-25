@@ -33,7 +33,7 @@ type IllustrationProjectReconciler struct {
 //  1. Load the IllustrationProject.
 //  2. Look up product config from the product registry (config/products.yaml).
 //  3. Derive MinIO prefixes from productId and registry (no prefixes in CRD).
-//  4. Trigger/ensure an illustration run (TODO: Dagster / Job integration).
+//  4. Trigger/ensure an illustration run via Kubernetes Jobs.
 //  5. Update status.phase / lastRunTime / lastRunId / lastError.
 func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx).WithValues("illustrationproject", req.NamespacedName)
