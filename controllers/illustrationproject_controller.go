@@ -482,18 +482,19 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 									"set -euo pipefail; " +
 										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
 										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
-										"cd /opt/dagster/app; " +
+										"cd /opt/actuary/app; " +
 										"python -m actuarypoc.cli.main project-minio",
 								},
 								Env: func() []corev1.EnvVar {
 									vars := []corev1.EnvVar{
 										{Name: "PRODUCT_ID", Value: proj.Spec.ProductId},
 										{Name: "PROJECT_NAME", Value: proj.Name},
+										{Name: "RUN_ID", Value: runID},
 										{Name: "FILINGS_PREFIX", Value: filingsPrefix},
 										{Name: "POLICIES_PREFIX", Value: policiesPrefix},
 										{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
 										// Ensure Python can import actuarypoc from the source tree in the runner image.
-										{Name: "PYTHONPATH", Value: "/opt/dagster/app/src"},
+										{Name: "PYTHONPATH", Value: "/opt/actuary/app/src"},
 										// Projection artefact location for the runner → MinIO,
 										// and surfaced back on IllustrationProject.Status.
 										{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},

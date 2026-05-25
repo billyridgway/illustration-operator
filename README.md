@@ -61,32 +61,44 @@ At a high level, the reconciler does the following whenever an
      assumption ID), falling back to sensible conventions when omitted.
    - Populate `status.resolved` with a human‑readable summary of:
      product id, PAS source, DSL file, assumption set id, and prefixes.
-3. **Optionally run LLM assumptions extraction**
+3. **Optionally run LLM assumptions extraction (with approval gate)**
    - If the product has LLM config, ensure a one‑shot `Job` named
      `assumptions-<productId>` exists.
    - That Job runs the `actuarypoc` CLI to read the latest doc from MinIO
-     (under the configured doc prefix) and upsert an `AssumptionSet`.
-   - The controller waits for this Job to reach a terminal state
-     (Succeeded or Failed) before starting the projection Job, so that
-     successful extractions are visible to the projection pipeline.
-4. **Run the illustration pipeline**
-   - Ensure a `Job` named `illustration-<projectName>` exists.
-   - The Job uses the runner image to:
-     - Load demo/sample data into MinIO (via several `load-sample` calls).
-     - Run `python -m actuarypoc.cli.main project-minio` to produce
-       projection artefacts under the derived projections prefix.
+     (under the configured doc prefix) and upsert an `AssumptionSet` into
+     the registry.
+   - Once the Job completes successfully, the operator records the logical
+     assumption id on status (`status.assumptionSetId`) and moves the
+     project into the `AwaitingApproval` phase until a separate approval
+     step marks `status.assumptionApproved = true`.
+4. **Run the illustration pipeline (run‑oriented)**
+   - After approval (or when no LLM refresh is configured), ensure a `Job`
+     named `illustration-<projectName>` exists.
+   - The Job uses the runner image to run
+     `python -m actuarypoc.cli.main project-minio` against existing MinIO
+     inputs; demo/bootstrap data is loaded by separate Jobs/flows, not as
+     part of this Job.
+   - The operator passes deterministic, run‑specific object keys into the
+     container so it writes to:
+     - `projections/<productId>/<runId>/projection.json`
+     - `audit/<productId>/<runId>/audit.json` (sanitized audit metadata)
+     - `audit/<productId>/<runId>/inputs.json` (input snapshot metadata)
    - If `spec.pasConfigMap` is set, the Job mounts that ConfigMap and points
      the projection service at PAS JSON on disk instead of MinIO
      `pas_export/` prefixes.
-5. **Update status**
-   - Before creating the Job, write a deterministic
-     `status.projectionObject` (the MinIO object key where the projection
-     will be written), and set `status.phase = Running`.
-   - While the Job is Pending/Running, keep `phase = Running` and update
-     `status.lastRunId`.
-   - On Job completion or failure, set `phase` to `Succeeded` or `Failed`,
-     update `lastRunTime`, `lastRunId`, `lastError`, and leave
-     `projectionObject` pointing at the artefact location.
+5. **Update status (sanitized wiring + artefact metadata)**
+   - Before creating the Job, the operator writes the planned
+     `status.projectionObject`, `status.auditObject`, and
+     `status.inputSnapshotObject`, sets `status.engineVersion` (from
+     environment) and `status.runnerImage`, and moves `status.phase` to
+     `Running`.
+   - While the Job is Pending/Running, it keeps `phase = Running` and
+     updates `status.lastRunId`.
+   - On Job completion or failure, it sets `phase` to `Succeeded` or
+     `Failed`, updates `lastRunTime`, `lastRunId`, `lastError`, and leaves
+     the artefact object keys pointing at the run‑specific locations. No
+     PAS records, SERFF text, or raw projection values are written into
+     status.
 
 The net effect: a small CRD instance (“run an illustration for product X,
 with these PAS inputs, over this horizon”) turns into concrete work
@@ -144,8 +156,21 @@ controller here should drop into that layout cleanly.
 
 ## CRD overview
 
-`IllustrationProject` (short name: `ilproj`) is namespaced and intentionally
-minimal. Key fields:
+`IllustrationProject` (short name: `ilproj`) is namespaced, intentionally
+minimal, and run‑oriented. For the POC, one `IllustrationProject` typically
+represents one illustration run/project.
+
+Spec remains deliberately small:
+
+- `productId` – logical product identifier (must exist in the product
+  registry).
+- `horizonYears` – projection horizon in years.
+- `mode` – `adhoc` now; `scheduled` reserved for future scheduler work.
+- `pasConfigMap` – optional ConfigMap providing PAS JSON under `pas.json`.
+- `runPolicy` – optional hints for a future scheduler (cron, concurrency).
+- `notes` – free‑form text for humans; ignored by the controller logic.
+
+Example:
 
 ```yaml
 apiVersion: illustrations.poc/v1alpha1
@@ -163,6 +188,25 @@ spec:
 
 The product registry lives in `config/products.yaml` and is typically
 mounted into the operator at `/config/products.yaml`.
+
+Status is where most of the interesting runtime information lives. Key
+status fields (all sanitized / metadata only):
+
+- `phase` – coarse lifecycle: `Pending`, `Running`, `AwaitingApproval`,
+  `Succeeded`, `Failed`.
+- `lastRunId` / `lastRunTime` / `lastError` – recent run metadata.
+- `projectionObject` – MinIO key for the projection JSON artefact.
+- `auditObject` – MinIO key for a sanitized audit JSON artefact.
+- `inputSnapshotObject` – MinIO key for a small input snapshot JSON
+  (object keys, counts, timestamps).
+- `assumptionSetId` – logical id of the AssumptionSet the run is wired to.
+- `assumptionApproved` – whether that AssumptionSet has been explicitly
+  approved for use (gates projections when LLM refresh is enabled).
+- `engineVersion` – projection engine version used for the last run
+  (string from environment).
+- `runnerImage` – container image used for the illustration Job.
+- `resolved` – structured summary of wiring (product id, PAS source,
+  DSL file, MinIO prefixes) with no raw data.
 
 ---
 
