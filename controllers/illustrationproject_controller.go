@@ -508,6 +508,17 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										{Name: "MINIO_BUCKET", Value: "illuminet"},
 										{Name: "MINIO_SECURE", Value: "false"},
 									}
+									// Inject Postgres DSN from secret when available so that the
+									// runner can record illustration_runs metadata in SQL.
+									vars = append(vars, corev1.EnvVar{
+										Name: "POSTGRES_DSN",
+										ValueFrom: &corev1.EnvVarSource{
+											SecretKeyRef: &corev1.SecretKeySelector{
+												LocalObjectReference: corev1.LocalObjectReference{Name: "postgres-secret"},
+												Key:                  "POSTGRES_DSN",
+											},
+										},
+									})
 									if proj.Spec.PasConfigMap != "" {
 										vars = append(vars, corev1.EnvVar{Name: "PAS_JSON_PATH", Value: "/config/pas/pas.json"})
 									}
