@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,10 +17,54 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"gopkg.in/yaml.v3"
 	illustrationsv1alpha1 "illustration-operator/api/v1alpha1"
 )
+
+var (
+	// Basic Prometheus metrics for the POC operator. These intentionally avoid
+	// embedding any policyholder- or PAS-level data; labels are limited to
+	// coarse-grained fields like product id and outcome.
+	reconcileTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "illustrationproject_reconciles_total",
+		Help: "Total number of IllustrationProject reconciles.",
+	})
+	reconcileErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "illustrationproject_reconcile_errors_total",
+		Help: "Total number of IllustrationProject reconciles that ended in error.",
+	})
+	jobsCreated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "illustrationproject_jobs_created_total",
+		Help: "Number of illustration Jobs created by the operator.",
+	}, []string{"product"})
+	jobFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "illustrationproject_jobs_failed_total",
+		Help: "Number of illustration Jobs that reached a Failed condition.",
+	}, []string{"product"})
+	assumptionDurations = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "illustrationproject_assumption_run_seconds",
+		Help:    "Duration of LLM assumption extraction Jobs in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"product"})
+	illustrationDurations = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "illustrationproject_run_seconds",
+		Help:    "Duration of illustration Jobs in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"product"})
+)
+
+func init() {
+	metrics.Registry.MustRegister(
+		reconcileTotal,
+		reconcileErrors,
+		jobsCreated,
+		jobFailures,
+		assumptionDurations,
+		illustrationDurations,
+	)
+}
 
 // IllustrationProjectReconciler reconciles an IllustrationProject object.
 type IllustrationProjectReconciler struct {
@@ -36,6 +81,8 @@ type IllustrationProjectReconciler struct {
 //  4. Trigger/ensure an illustration run via Kubernetes Jobs.
 //  5. Update status.phase / lastRunTime / lastRunId / lastError.
 func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	reconcileTotal.Inc()
+
 	log := ctrl.LoggerFrom(ctx).WithValues("illustrationproject", req.NamespacedName)
 
 	proj := &illustrationsv1alpha1.IllustrationProject{}
@@ -56,11 +103,13 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 	cfg, err := loadProductConfig()
 	if err != nil {
 		log.Error(err, "failed to load product registry")
+		reconcileErrors.Inc()
 		return r.updateStatusError(ctx, proj, "Failed", err)
 	}
 
 	productCfg, ok := cfg.Products[proj.Spec.ProductId]
 	if !ok {
+		reconcileErrors.Inc()
 		return r.updateStatusError(ctx, proj, "Failed", fmt.Errorf("unknown productId %q", proj.Spec.ProductId))
 	}
 
@@ -86,14 +135,17 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// Capture a human-friendly summary of the resolved wiring on status.
 	proj.Status.Resolved = &illustrationsv1alpha1.ResolvedRefs{
-		ProductId:    proj.Spec.ProductId,
-		PasConfigMap: proj.Spec.PasConfigMap,
-		PasKey:       "pas.json",
-		DSLFile:      productCfg.DSLFile,
-		AssumptionId: assumptionID,
+		ProductId:     proj.Spec.ProductId,
+		PasConfigMap:  proj.Spec.PasConfigMap,
+		PasKey:        "pas.json",
+		DSLFile:       productCfg.DSLFile,
+		AssumptionId:  assumptionID,
 		FilingsPrefix: filingsPrefix,
 		DocPrefix:     docPrefix,
 	}
+	// Record the logical AssumptionSet id on status so UIs can see which
+	// set is intended for this project without exposing its contents.
+	proj.Status.AssumptionSetId = assumptionID
 
 	log.Info("reconciling project", "productId", proj.Spec.ProductId, "filingsPrefix", filingsPrefix, "policiesPrefix", policiesPrefix, "projectionsPrefix", projectionsPrefix)
 
@@ -130,8 +182,13 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 			terminal := false
 			for _, cond := range llmJob.Status.Conditions {
 				if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-					log.Info("LLM assumptions Job completed; proceeding to projection", "job", llmJobName)
+					log.Info("LLM assumptions Job completed", "job", llmJobName)
 					terminal = true
+					// Record duration when start time is available.
+					if llmJob.Status.StartTime != nil {
+						dur := time.Since(llmJob.Status.StartTime.Time).Seconds()
+						assumptionDurations.WithLabelValues(proj.Spec.ProductId).Observe(dur)
+					}
 					break
 				}
 				if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
@@ -147,6 +204,24 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 				log.Info("LLM assumptions Job not yet in terminal state; requeuing before projection", "job", llmJobName)
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
+
+			// If LLM extraction is configured and has just completed successfully,
+			// gate projection on an explicit approval step. For the POC, this is
+			// represented by status.AssumptionApproved; external tooling (e.g. a
+			// small UI or kubectl patch) is expected to flip this once a human has
+			// reviewed/approved the extracted set.
+			if !proj.Status.AssumptionApproved {
+				now := metav1.Now()
+				proj.Status.Phase = "AwaitingApproval"
+				proj.Status.LastRunTime = &now
+				proj.Status.LastRunID = llmJobName
+				proj.Status.LastError = ""
+				if err := r.Status().Update(ctx, proj); err != nil {
+					return ctrl.Result{}, err
+				}
+				// Do not start the illustration Job until approval is recorded.
+				return ctrl.Result{}, nil
+			}
 		}
 	}
 
@@ -155,6 +230,7 @@ func (r *IllustrationProjectReconciler) Reconcile(ctx context.Context, req ctrl.
 	res, err := r.ensureIllustrationJob(ctx, log, &productCfg, proj, filingsPrefix, policiesPrefix, projectionsPrefix)
 	if err != nil {
 		log.Error(err, "failed to ensure illustration Job")
+		reconcileErrors.Inc()
 		return r.updateStatusError(ctx, proj, "Failed", err)
 	}
 
@@ -348,12 +424,16 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 	filingsPrefix, policiesPrefix, projectionsPrefix string,
 ) (ctrl.Result, error) {
 	jobName := fmt.Sprintf("illustration-%s", proj.Name)
+	runID := string(proj.UID)
 	nn := types.NamespacedName{Name: jobName, Namespace: proj.Namespace}
 	job := &batchv1.Job{}
 
-	// Choose a deterministic object key for the projection artifact so we can
-	// both write it from the runner and surface it in status.
-	projectionObject := fmt.Sprintf("%srun-%d.json", projectionsPrefix, time.Now().Unix())
+	// Choose deterministic, run-specific object keys so we can both write
+	// artefacts from the runner and surface them in status without exposing
+	// any raw PAS data.
+	projectionObject := fmt.Sprintf("projections/%s/%s/projection.json", proj.Spec.ProductId, runID)
+	auditObject := fmt.Sprintf("audit/%s/%s/audit.json", proj.Spec.ProductId, runID)
+	inputSnapshotObject := fmt.Sprintf("audit/%s/%s/inputs.json", proj.Spec.ProductId, runID)
 
 	if err := r.Get(ctx, nn, job); err != nil {
 		if !kerrors.IsNotFound(err) {
@@ -386,7 +466,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 									VolumeSource: corev1.VolumeSource{
 										ConfigMap: &corev1.ConfigMapVolumeSource{
 											LocalObjectReference: corev1.LocalObjectReference{Name: proj.Spec.PasConfigMap},
-											Items: []corev1.KeyToPath{{Key: "pas.json", Path: "pas.json"}},
+											Items:                []corev1.KeyToPath{{Key: "pas.json", Path: "pas.json"}},
 										},
 									},
 								},
@@ -403,12 +483,6 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										"echo 'Starting illustration run for ' $PRODUCT_ID ' project ' $PROJECT_NAME; " +
 										"echo 'FILINGS_PREFIX=' $FILINGS_PREFIX ' POLICIES_PREFIX=' $POLICIES_PREFIX ' PROJECTIONS_PREFIX=' $PROJECTIONS_PREFIX; " +
 										"cd /opt/dagster/app; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/policies_p12trf.csv; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/pas_export.csv; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/actuarial_tables.csv; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/actuarial_tables_term23.csv; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/crm_accounts.csv; " +
-										"python -m actuarypoc.cli.main load-sample /opt/dagster/app/src/actuarypoc/sample_data/rate_curves.csv; " +
 										"python -m actuarypoc.cli.main project-minio",
 								},
 								Env: func() []corev1.EnvVar {
@@ -420,9 +494,12 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										{Name: "PROJECTIONS_PREFIX", Value: projectionsPrefix},
 										// Ensure Python can import actuarypoc from the source tree in the runner image.
 										{Name: "PYTHONPATH", Value: "/opt/dagster/app/src"},
-										// Projection artifact location for the runner → MinIO,
+										// Projection artefact location for the runner → MinIO,
 										// and surfaced back on IllustrationProject.Status.
 										{Name: "PROJECTION_OBJECT_NAME", Value: projectionObject},
+										// Additional audit + input snapshot artefacts.
+										{Name: "AUDIT_OBJECT_NAME", Value: auditObject},
+										{Name: "INPUT_SNAPSHOT_OBJECT_NAME", Value: inputSnapshotObject},
 										// MinIO configuration for connectors → MinIO ingestion.
 										{Name: "MINIO_ENDPOINT", Value: "minio.minio-system.svc.cluster.local:9000"},
 										{Name: "MINIO_ACCESS_KEY", Value: "admin"},
@@ -431,8 +508,8 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 										{Name: "MINIO_SECURE", Value: "false"},
 									}
 									if proj.Spec.PasConfigMap != "" {
-											vars = append(vars, corev1.EnvVar{Name: "PAS_JSON_PATH", Value: "/config/pas/pas.json"})
-										}
+										vars = append(vars, corev1.EnvVar{Name: "PAS_JSON_PATH", Value: "/config/pas/pas.json"})
+									}
 									return vars
 								}(),
 								VolumeMounts: func() []corev1.VolumeMount {
@@ -460,12 +537,16 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 			},
 		}
 
-		// Record the planned projection object location in status before we
-		// launch the Job. On success the runner will have written to this key.
+		// Record the planned artefact locations in status before we launch the
+		// Job. On success the runner will have written to these keys.
 		proj.Status.Phase = "Running"
-		proj.Status.LastRunID = jobName
+		proj.Status.LastRunID = runID
 		proj.Status.LastError = ""
 		proj.Status.ProjectionObject = projectionObject
+		proj.Status.AuditObject = auditObject
+		proj.Status.InputSnapshotObject = inputSnapshotObject
+		proj.Status.EngineVersion = os.Getenv("ILLUSTRATION_ENGINE_VERSION")
+		proj.Status.RunnerImage = job.Spec.Template.Spec.Containers[0].Image
 		if err := r.Status().Update(ctx, proj); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -481,6 +562,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 		if err := r.Create(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
+		jobsCreated.WithLabelValues(proj.Spec.ProductId).Inc()
 
 		log.Info("created illustration Job", "job", jobName)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -490,7 +572,7 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 	for _, cond := range job.Status.Conditions {
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			proj.Status.Phase = "Failed"
-			proj.Status.LastRunID = job.Name
+			proj.Status.LastRunID = runID
 			msg := cond.Message
 			if msg == "" {
 				msg = cond.Reason
@@ -499,14 +581,19 @@ func (r *IllustrationProjectReconciler) ensureIllustrationJob(
 			if err := r.Status().Update(ctx, proj); err != nil {
 				return ctrl.Result{}, err
 			}
+			jobFailures.WithLabelValues(proj.Spec.ProductId).Inc()
 			return ctrl.Result{}, nil
 		}
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			proj.Status.Phase = "Succeeded"
-			proj.Status.LastRunID = job.Name
+			proj.Status.LastRunID = runID
 			proj.Status.LastError = ""
 			if err := r.Status().Update(ctx, proj); err != nil {
 				return ctrl.Result{}, err
+			}
+			if job.Status.StartTime != nil {
+				dur := time.Since(job.Status.StartTime.Time).Seconds()
+				illustrationDurations.WithLabelValues(proj.Spec.ProductId).Observe(dur)
 			}
 			return ctrl.Result{}, nil
 		}

@@ -1,8 +1,8 @@
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // IllustrationProjectSpec defines the desired state of IllustrationProject.
@@ -107,6 +107,35 @@ type IllustrationProjectStatus struct {
 	// ProjectionObject holds the MinIO object key where the most recent
 	// projection artifact was written (e.g. projections/p12trf/run-123.json).
 	ProjectionObject string `json:"projectionObject,omitempty"`
+
+	// AuditObject holds the MinIO object key for a sanitized audit artefact
+	// describing the run (inputs, metadata, checks), separate from the
+	// projection payload.
+	AuditObject string `json:"auditObject,omitempty"`
+
+	// InputSnapshotObject, when set, points at a MinIO object that captures a
+	// lightweight snapshot of which input objects / versions were used for
+	// the run (e.g. PAS export object name, actuarial table object name).
+	InputSnapshotObject string `json:"inputSnapshotObject,omitempty"`
+
+	// AssumptionSetId is the logical identifier of the AssumptionSet the run
+	// is expected to use. For LLM-refreshed products this is typically the
+	// id passed to the extractor (and later approved by a human).
+	AssumptionSetId string `json:"assumptionSetId,omitempty"`
+
+	// AssumptionApproved indicates whether the AssumptionSet referenced by
+	// AssumptionSetId has been approved for use. The operator will not start
+	// a projection run while this remains false for products that use LLM
+	// extraction in the POC.
+	AssumptionApproved bool `json:"assumptionApproved,omitempty"`
+
+	// EngineVersion records the version of the projection engine that
+	// produced the most recent run (when known).
+	EngineVersion string `json:"engineVersion,omitempty"`
+
+	// RunnerImage records the container image used for the illustration Job
+	// that produced the most recent run (tag or digest when available).
+	RunnerImage string `json:"runnerImage,omitempty"`
 
 	// Resolved describes the concrete inputs and artefacts used for the
 	// most recent run (product, PAS source, DSL, assumptions, filings).
