@@ -68,6 +68,18 @@ spec:
                   type: string
                 projectionObject:
                   type: string
+                auditObject:
+                  type: string
+                inputSnapshotObject:
+                  type: string
+                assumptionSetId:
+                  type: string
+                assumptionApproved:
+                  type: boolean
+                engineVersion:
+                  type: string
+                runnerImage:
+                  type: string
                 resolved:
                   type: object
                   properties:
